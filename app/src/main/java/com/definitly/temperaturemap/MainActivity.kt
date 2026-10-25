@@ -1,6 +1,7 @@
 package com.definitly.temperaturemap
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -277,7 +278,7 @@ private val CITIES = listOf(
     c("Билибино", 68.0500, 166.4500, 5), c("Певек", 69.7000, 170.3000, 5)
 )
 
-private fun weatherText(code: Int): String = when (code) {
+internal fun weatherText(code: Int): String = when (code) {
     0 -> "Ясно"
     1 -> "Преимущественно ясно"
     2 -> "Переменная облачность"
@@ -621,6 +622,12 @@ class MainActivity : Activity() {
                 selected = hit
                 showDetails(hit)
                 mapView.invalidate()
+                startActivity(
+                    Intent(this@MainActivity, DetailActivity::class.java)
+                        .putExtra(DetailActivity.EXTRA_NAME, hit.city.name)
+                        .putExtra(DetailActivity.EXTRA_LAT, hit.city.lat)
+                        .putExtra(DetailActivity.EXTRA_LON, hit.city.lon)
+                )
                 true
             } else {
                 false
