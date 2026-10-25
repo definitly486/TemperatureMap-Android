@@ -498,7 +498,7 @@ class MainActivity : Activity() {
                 occupied.add(full)
                 hits.add(w to full)
 
-                fill.color = colorFor(w.temp)
+                fill.color = colorFor(w)
                 canvas.drawRoundRect(pill, 8f * d, 8f * d, fill)
                 if (w === selected) canvas.drawRoundRect(pill, 8f * d, 8f * d, border)
                 canvas.drawText(label, x, pill.centerY() + tempPaint.textSize * 0.35f, tempPaint)
