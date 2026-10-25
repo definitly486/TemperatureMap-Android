@@ -857,7 +857,7 @@ class MainActivity : Activity() {
             val humidity = firstValue("relativeHumidity")?.roundToInt()?.coerceIn(0, 100) ?: 0
             val cloud = firstValue("skyCover")?.roundToInt()?.coerceIn(0, 100) ?: 0
             val precip = (firstValue("quantitativePrecipitation") ?: 0.0).coerceAtLeast(0.0)
-            val code = when {
+            val weatherCode = when {
                 precip >= 5.0 -> 65
                 precip > 0.0 -> 61
                 cloud >= 85 -> 3
@@ -865,7 +865,7 @@ class MainActivity : Activity() {
                 cloud >= 15 -> 1
                 else -> 0
             }
-            return CityWeather(city, tempC, tempC, humidity, windMs, precip, cloud, code)
+            return CityWeather(city, tempC, tempC, humidity, windMs, precip, cloud, weatherCode)
         } finally {
             connection.disconnect()
         }
