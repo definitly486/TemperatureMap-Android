@@ -815,8 +815,8 @@ class MainActivity : Activity() {
             normalized.contains("heavysnow") -> 75
             normalized.contains("snow") -> 71
             normalized.contains("fog") -> 45
-            normalized.contains("cloudy") -> 3
             normalized.contains("partlycloudy") -> 2
+            normalized.contains("cloudy") -> 3
             normalized.contains("fair") -> 1
             normalized.contains("clearsky") -> 0
             else -> 3
