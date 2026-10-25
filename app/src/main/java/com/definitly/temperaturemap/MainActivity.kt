@@ -494,7 +494,7 @@ class MainActivity : Activity() {
                 if (retry >= max429Retries) throw e
                 val delay = if (e.retryAfterMillis > 0L) e.retryAfterMillis else backoffMillis
                 android.util.Log.w("TemperatureMap", "HTTP 429; повтор через ${delay} мс (попытка ${retry + 1}/$max429Retries)")
-                Thread.sleep(delay.coerceAtMost(120_000L))
+                Thread.sleep(delay)
                 retry++
                 backoffMillis = (backoffMillis * 2).coerceAtMost(60_000L)
             }
