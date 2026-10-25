@@ -35,6 +35,8 @@ data class CityWeather(
     val feels: Double,
     val humidity: Int,
     val wind: Double,
+    val precipitation: Double,
+    val cloudCover: Int,
     val code: Int
 )
 
@@ -189,7 +191,10 @@ private fun weatherText(code: Int): String = when (code) {
     else -> "—"
 }
 
+enum class WeatherLayer { TEMPERATURE, PRECIPITATION, WIND, CLOUDS }
+
 class MainActivity : Activity() {
+    private var layer = WeatherLayer.TEMPERATURE
     private lateinit var map: MapView
     private lateinit var overlay: CityOverlay
     private lateinit var status: TextView
@@ -237,6 +242,37 @@ class MainActivity : Activity() {
         })
         root.addView(header)
 
+        val layers = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(4, 0, 4, 4)
+            setBackgroundColor(Color.WHITE)
+        }
+        val layerButtons = listOf(
+            "Температура" to WeatherLayer.TEMPERATURE,
+            "Осадки" to WeatherLayer.PRECIPITATION,
+            "Ветер" to WeatherLayer.WIND,
+            "Облака" to WeatherLayer.CLOUDS
+        )
+        layerButtons.forEach { (label, value) ->
+            layers.addView(Button(this).apply {
+                text = label
+                textSize = 11f
+                setPadding(2, 0, 2, 0)
+                isAllCaps = false
+                alpha = if (value == layer) 1f else 0.65f
+                setOnClickListener {
+                    layer = value
+                    for (i in 0 until layers.childCount) {
+                        layers.getChildAt(i).alpha = if (i == layerButtons.indexOfFirst { it.second == value }) 1f else 0.65f
+                    }
+                    map.invalidate()
+                    status.text = "Слой: $label · данные Open-Meteo"
+                }
+            }, LinearLayout.LayoutParams(0, 44, 1f))
+        }
+        root.addView(layers)
+
         map = MapView(this).apply {
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
@@ -268,7 +304,7 @@ class MainActivity : Activity() {
                 val lons = CITIES.joinToString(",") { it.lon.toString() }
                 val url = URL(
                     "https://api.open-meteo.com/v1/forecast?latitude=$lats&longitude=$lons" +
-                        "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m" +
+                        "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,cloud_cover" +
                         "&wind_speed_unit=ms"
                 )
                 val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -292,6 +328,8 @@ class MainActivity : Activity() {
                             cur.getDouble("apparent_temperature"),
                             cur.getInt("relative_humidity_2m"),
                             cur.getDouble("wind_speed_10m"),
+                            cur.optDouble("precipitation", 0.0),
+                            cur.optInt("cloud_cover", 0),
                             cur.getInt("weather_code")
                         )
                     }
@@ -314,7 +352,7 @@ class MainActivity : Activity() {
 
     private fun showDetails(w: CityWeather) {
         status.text = "${w.city.name}: ${w.temp.roundToInt()}° (ощущается как ${w.feels.roundToInt()}°)\n" +
-            "${weatherText(w.code)} · ветер ${w.wind.roundToInt()} м/с · влажность ${w.humidity}%"
+            "${weatherText(w.code)} · ветер ${w.wind.roundToInt()} м/с · осадки ${"%.1f".format(java.util.Locale.US, w.precipitation)} мм · облачность ${w.cloudCover}% · влажность ${w.humidity}%"
     }
 
     override fun onResume() {
@@ -370,12 +408,49 @@ class MainActivity : Activity() {
             else -> 7.5
         }
 
-        private fun colorFor(t: Double) = when {
-            t < -10 -> Color.rgb(35, 100, 220)
-            t < 0 -> Color.rgb(58, 160, 220)
-            t < 10 -> Color.rgb(60, 175, 120)
-            t < 20 -> Color.rgb(245, 175, 45)
-            else -> Color.rgb(225, 70, 55)
+        private fun metric(w: CityWeather): Double = when (layer) {
+            WeatherLayer.TEMPERATURE -> w.temp
+            WeatherLayer.PRECIPITATION -> w.precipitation
+            WeatherLayer.WIND -> w.wind
+            WeatherLayer.CLOUDS -> w.cloudCover.toDouble()
+        }
+
+        private fun colorFor(w: CityWeather): Int {
+            val v = metric(w)
+            return when (layer) {
+                WeatherLayer.TEMPERATURE -> when {
+                    v < -10 -> Color.rgb(35, 100, 220)
+                    v < 0 -> Color.rgb(58, 160, 220)
+                    v < 10 -> Color.rgb(60, 175, 120)
+                    v < 20 -> Color.rgb(245, 175, 45)
+                    else -> Color.rgb(225, 70, 55)
+                }
+                WeatherLayer.PRECIPITATION -> when {
+                    v < 0.1 -> Color.rgb(180, 210, 230)
+                    v < 1.0 -> Color.rgb(70, 180, 245)
+                    v < 4.0 -> Color.rgb(25, 100, 230)
+                    else -> Color.rgb(120, 55, 190)
+                }
+                WeatherLayer.WIND -> when {
+                    v < 3 -> Color.rgb(80, 190, 120)
+                    v < 7 -> Color.rgb(240, 210, 55)
+                    v < 12 -> Color.rgb(245, 135, 40)
+                    else -> Color.rgb(215, 55, 55)
+                }
+                WeatherLayer.CLOUDS -> when {
+                    v < 20 -> Color.rgb(100, 190, 245)
+                    v < 50 -> Color.rgb(120, 190, 160)
+                    v < 80 -> Color.rgb(145, 145, 155)
+                    else -> Color.rgb(70, 75, 90)
+                }
+            }
+        }
+
+        private fun labelFor(w: CityWeather): String = when (layer) {
+            WeatherLayer.TEMPERATURE -> "${w.temp.roundToInt()}°"
+            WeatherLayer.PRECIPITATION -> "${"%.1f".format(java.util.Locale.US, w.precipitation)}"
+            WeatherLayer.WIND -> "${w.wind.roundToInt()} м/с"
+            WeatherLayer.CLOUDS -> "${w.cloudCover}%"
         }
 
         override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
@@ -385,6 +460,18 @@ class MainActivity : Activity() {
             val projection = mapView.projection
             val occupied = ArrayList<RectF>()
             val margin = 40f * d
+
+            // Цветовые пятна показывают плавный визуальный переход между погодными точками.
+            for (w in items) {
+                val p = projection.toPixels(GeoPoint(w.city.lat, w.city.lon), null)
+                val x = p.x.toFloat()
+                val y = p.y.toFloat()
+                if (x < -100f * d || y < -100f * d || x > mapView.width + 100f * d || y > mapView.height + 100f * d) continue
+                val base = colorFor(w)
+                fill.color = Color.argb(78, Color.red(base), Color.green(base), Color.blue(base))
+                val radius = (18f + (zoom - 3f).toFloat().coerceIn(0f, 5f) * 5f) * d
+                canvas.drawCircle(x, y, radius, fill)
+            }
 
             val visible = items
                 .filter { zoom >= minZoom(it.city.tier) || it === selected }
@@ -396,7 +483,7 @@ class MainActivity : Activity() {
                 val y = p.y.toFloat()
                 if (x < -margin || y < -margin || x > mapView.width + margin || y > mapView.height + margin) continue
 
-                val label = "${w.temp.roundToInt()}°"
+                val label = labelFor(w)
                 val pillW = tempPaint.measureText(label) + 14f * d
                 val pillH = 26f * d
                 val pill = RectF(x - pillW / 2, y - pillH / 2, x + pillW / 2, y + pillH / 2)
