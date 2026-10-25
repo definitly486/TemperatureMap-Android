@@ -119,7 +119,7 @@ class MainActivity : Activity() {
                 }
                 handler.post {
                     temperatureOverlay.points = temps
-                    temperatureOverlay.invalidate()
+                    map.invalidate()
                     status.text = if (temps.isEmpty()) {
                         "Не удалось загрузить данные. Проверьте интернет и нажмите ↻."
                     } else {
