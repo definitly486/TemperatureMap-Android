@@ -424,7 +424,8 @@ class MainActivity : Activity() {
                 return true
             }
         })
-        loadTemperatures()
+        // Дожидаемся измерения MapView, чтобы первый запрос учитывал реальную область карты.
+        handler.post { scheduleViewportLoad() }
     }
 
     private fun fetchChunk(chunk: List<City>): List<CityWeather> {
