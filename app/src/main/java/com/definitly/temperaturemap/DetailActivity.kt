@@ -307,7 +307,7 @@ class DetailActivity : Activity() {
         // солнце: рассвет/закат и положение солнца на дуге
         val sunrise = daily.getJSONArray("sunrise").optString(0, "")
         val sunset = daily.getJSONArray("sunset").optString(0, "")
-        if (sunrise.length() >= 16 && sunset.length() >= 16) {
+        if (sunrise.length >= 16 && sunset.length >= 16) {
             val rise = minutesOfDay(sunrise.substring(11, 16))
             val set = minutesOfDay(sunset.substring(11, 16))
             val now = minutesOfDay(nowTime.substring(11, 16))
