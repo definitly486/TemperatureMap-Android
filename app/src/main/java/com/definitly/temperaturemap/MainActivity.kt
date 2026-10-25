@@ -568,15 +568,24 @@ class MainActivity : Activity() {
     private var viewportLoadRunnable: Runnable? = null
     private val weatherCache = LinkedHashMap<String, CachedWeather>()
     private val openMeteoCacheTtlMillis = 12 * 60 * 1000L
+    private val nwsCacheTtlMillis = 60 * 60 * 1000L
     // MET Norway advises waiting at least half the model update interval:
     // 30 minutes in the Nordic area, 3 hours elsewhere.
     private val metNordicCacheTtlMillis = 30 * 60 * 1000L
     private val metGlobalCacheTtlMillis = 3 * 60 * 60 * 1000L
+    private val nwsCityNames = setOf(
+        "Нью-Йорк", "Лос-Анджелес", "Чикаго", "Сиэтл", "Сан-Франциско",
+        "Даллас", "Филадельфия", "Хьюстон", "Миннеаполис", "Детройт",
+        "Бостон", "Вашингтон", "Сан-Диего", "Портленд", "Лас-Вегас",
+        "Финикс", "Денвер"
+    )
+    private val nwsGridUrls = HashMap<String, String>()
     private val metNordicCityNames = setOf(
         "Хельсинки", "Стокгольм", "Осло", "Копенгаген", "Рейкьявик",
         "Таллин", "Рига", "Вильнюс", "Санкт-Петербург", "Мурманск"
     )
     private fun cacheTtlFor(city: City): Long = when {
+        city.name in nwsCityNames -> nwsCacheTtlMillis
         city.name !in metNorwayCityNames -> openMeteoCacheTtlMillis
         city.name in metNordicCityNames -> metNordicCacheTtlMillis
         else -> metGlobalCacheTtlMillis
@@ -652,7 +661,7 @@ class MainActivity : Activity() {
                         layers.getChildAt(i).alpha = if (i == layerButtons.indexOfFirst { it.second == value }) 1f else 0.65f
                     }
                     map.invalidate()
-                    status.text = "Слой: $label · MET Norway + Open-Meteo"
+                    status.text = "Слой: $label · NWS + MET Norway + Open-Meteo"
                 }
             }, LinearLayout.LayoutParams(0, 44, 1f))
         }
@@ -755,13 +764,22 @@ class MainActivity : Activity() {
     )
 
     private fun fetchWeatherForCities(cities: List<City>): List<CityWeather> {
-        val metCities = cities.filter { it.name in metNorwayCityNames }
-        val openMeteoCities = cities.filterNot { it.name in metNorwayCityNames }
+        // NWS takes priority for US locations, including New York and other cities
+        // that are also in the MET Norway city list.
+        val nwsCities = cities.filter { it.name in nwsCityNames }
+        val metCities = cities.filter { it.name in metNorwayCityNames && it.name !in nwsCityNames }
+        val openMeteoCities = cities.filter { it.name !in nwsCityNames && it.name !in metNorwayCityNames }
         val result = ArrayList<CityWeather>(cities.size)
 
-        // Open-Meteo accepts multiple coordinates in one request.
-        openMeteoCities.chunked(100).forEach { chunk ->
-            result.addAll(fetchChunkWithRetry(chunk))
+        openMeteoCities.chunked(100).forEach { result.addAll(fetchChunkWithRetry(it)) }
+
+        nwsCities.forEach { city ->
+            try {
+                result.add(fetchNws(city))
+            } catch (e: Exception) {
+                android.util.Log.w("TemperatureMap", "NWS failed for ${city.name}; falling back to Open-Meteo", e)
+                result.addAll(fetchChunkWithRetry(listOf(city)))
+            }
         }
 
         // MET Norway's Locationforecast endpoint accepts one coordinate per request.
@@ -769,13 +787,88 @@ class MainActivity : Activity() {
             try {
                 result.add(fetchMetNorwayWithRetry(city))
             } catch (e: Exception) {
-                // Keep the map populated if MET Norway is temporarily unavailable.
                 android.util.Log.w("TemperatureMap", "MET Norway failed for ${city.name}; falling back to Open-Meteo", e)
                 result.addAll(fetchChunkWithRetry(listOf(city)))
             }
             if (index < metCities.lastIndex) Thread.sleep(1_000L)
         }
         return result
+    }
+
+    /** NWS gridpoint data is the authoritative US forecast source. */
+    private fun fetchNws(city: City): CityWeather {
+        val gridUrl = synchronized(nwsGridUrls) { nwsGridUrls[city.name] }
+            ?: run {
+                val pointsUrl = URL("https://api.weather.gov/points/${city.lat},${city.lon}")
+                val pointsConnection = (pointsUrl.openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10000
+                    readTimeout = 15000
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", "TemperatureMap-Android/1.0 (https://github.com/definitly486/TemperatureMap-Android.)")
+                    setRequestProperty("Accept", "application/geo+json")
+                }
+                val discovered = try {
+                    if (pointsConnection.responseCode != 200) throw IOException("NWS points HTTP ${pointsConnection.responseCode}")
+                    org.json.JSONObject(pointsConnection.inputStream.bufferedReader().use { it.readText() })
+                        .getJSONObject("properties").getString("forecastGridData")
+                } finally {
+                    pointsConnection.disconnect()
+                }
+                synchronized(nwsGridUrls) { nwsGridUrls[city.name] = discovered }
+                discovered
+            }
+
+        val connection = (URL(gridUrl).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 10000
+            readTimeout = 20000
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "TemperatureMap-Android/1.0 (https://github.com/definitly486/TemperatureMap-Android.)")
+            setRequestProperty("Accept", "application/geo+json")
+        }
+        try {
+            val code = connection.responseCode
+            if (code != 200) {
+                val err = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                if (code == 429) {
+                    throw RateLimitException(parseRetryAfterMillis(connection.getHeaderField("Retry-After")), "NWS HTTP 429")
+                }
+                throw IOException("NWS HTTP $code ${err.orEmpty().take(120)}")
+            }
+            val props = org.json.JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                .getJSONObject("properties")
+
+            fun firstValue(field: String): Double? {
+                val values = props.optJSONObject(field)?.optJSONArray("values") ?: return null
+                for (i in 0 until values.length()) {
+                    val value = values.optJSONObject(i)?.opt("value")
+                    if (value is Number) return value.toDouble()
+                }
+                return null
+            }
+            val tempC = firstValue("temperature") ?: throw IOException("NWS temperature unavailable")
+            val windRaw = firstValue("windSpeed") ?: 0.0
+            val windUnit = props.optJSONObject("windSpeed")?.optString("uom", "").orEmpty()
+            val windMs = when {
+                windUnit.contains("km_h") -> windRaw / 3.6
+                windUnit.contains("mi_h") -> windRaw * 0.44704
+                windUnit.contains("kn") -> windRaw * 0.514444
+                else -> windRaw
+            }
+            val humidity = firstValue("relativeHumidity")?.roundToInt()?.coerceIn(0, 100) ?: 0
+            val cloud = firstValue("skyCover")?.roundToInt()?.coerceIn(0, 100) ?: 0
+            val precip = (firstValue("quantitativePrecipitation") ?: 0.0).coerceAtLeast(0.0)
+            val code = when {
+                precip >= 5.0 -> 65
+                precip > 0.0 -> 61
+                cloud >= 85 -> 3
+                cloud >= 45 -> 2
+                cloud >= 15 -> 1
+                else -> 0
+            }
+            return CityWeather(city, tempC, tempC, humidity, windMs, precip, cloud, code)
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun fetchMetNorway(city: City): CityWeather {
@@ -954,7 +1047,7 @@ class MainActivity : Activity() {
             return
         }
 
-        status.text = "Загружаем погоду из двух источников для ${missing.size} видимых городов…"
+        status.text = "Загружаем погоду из погодных источников для ${missing.size} видимых городов…"
         executor.execute {
             try {
                 val result = fetchWeatherForCities(missing)
@@ -968,7 +1061,7 @@ class MainActivity : Activity() {
                     overlay.items = merged.values.toList()
                     overlay.selected = overlay.selected?.let { merged[it.city.name] }
                     map.invalidate()
-                    status.text = "MET Norway (100 городов) + Open-Meteo · загружено: ${result.size} · кэш по правилам источников · видимых городов: ${requestedCities.size}"
+                    status.text = "NWS (США) + MET Norway (100 городов) + Open-Meteo · загружено: ${result.size} · видимых городов: ${requestedCities.size}"
                     loading.set(false)
                     if (viewportReloadPending) {
                         viewportReloadPending = false
