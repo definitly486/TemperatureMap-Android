@@ -93,41 +93,48 @@ class MainActivity : Activity() {
         status.text = "Загружаем данные Open-Meteo…"
         executor.execute {
             try {
+                val latitudes = listOf(70.0, 60.0, 50.0, 40.0, 30.0)
+                val longitudes = listOf(-10.0, 10.0, 30.0, 50.0, 70.0, 90.0)
                 val points = buildList {
-                    val latitudes = listOf(70.0, 60.0, 50.0, 40.0, 30.0)
-                    val longitudes = listOf(-10.0, 10.0, 30.0, 50.0, 70.0, 90.0)
                     for (lat in latitudes) for (lon in longitudes) add(GeoPoint(lat, lon))
                 }
-                val temps = points.mapNotNull { point ->
-                    try {
-                        val url = URL("https://api.open-meteo.com/v1/forecast?latitude=${point.latitude}&longitude=${point.longitude}&current=temperature_2m")
-                        val connection = (url.openConnection() as HttpURLConnection).apply {
-                            connectTimeout = 8000
-                            readTimeout = 8000
-                            requestMethod = "GET"
-                        }
-                        try {
-                            val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-                            val value = json.getJSONObject("current").getDouble("temperature_2m")
-                            TemperaturePoint(point.latitude, point.longitude, value)
-                        } finally {
-                            connection.disconnect()
-                        }
-                    } catch (_: Exception) {
-                        null
-                    }
+                val lats = points.joinToString(",") { it.latitude.toString() }
+                val lons = points.joinToString(",") { it.longitude.toString() }
+                val url = URL("https://api.open-meteo.com/v1/forecast?latitude=$lats&longitude=$lons&current=temperature_2m")
+
+                val connection = (url.openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10000
+                    readTimeout = 10000
+                    requestMethod = "GET"
                 }
+                val temps = try {
+                    val code = connection.responseCode
+                    if (code != 200) {
+                        val err = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                        throw RuntimeException("HTTP $code ${err.orEmpty().take(120)}")
+                    }
+                    val body = connection.inputStream.bufferedReader().use { it.readText() }
+                    val arr = org.json.JSONArray(body)
+                    (0 until arr.length()).map { i ->
+                        val o = arr.getJSONObject(i)
+                        TemperaturePoint(
+                            o.getDouble("latitude"),
+                            o.getDouble("longitude"),
+                            o.getJSONObject("current").getDouble("temperature_2m")
+                        )
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+
                 handler.post {
                     temperatureOverlay.points = temps
                     map.invalidate()
-                    status.text = if (temps.isEmpty()) {
-                        "Не удалось загрузить данные. Проверьте интернет и нажмите ↻."
-                    } else {
-                        "Температура сейчас · Open-Meteo · точек: ${temps.size}"
-                    }
+                    status.text = "Температура сейчас · Open-Meteo · точек: ${temps.size}"
                 }
             } catch (e: Exception) {
-                handler.post { status.text = "Ошибка загрузки: ${e.localizedMessage ?: "нет соединения"}" }
+                android.util.Log.e("TemperatureMap", "load failed", e)
+                handler.post { status.text = "Ошибка: ${e.javaClass.simpleName}: ${e.localizedMessage}" }
             }
         }
     }
