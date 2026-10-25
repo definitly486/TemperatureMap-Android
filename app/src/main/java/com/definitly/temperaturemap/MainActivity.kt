@@ -567,7 +567,20 @@ class MainActivity : Activity() {
     private var viewportReloadPending = false
     private var viewportLoadRunnable: Runnable? = null
     private val weatherCache = LinkedHashMap<String, CachedWeather>()
-    private val cacheTtlMillis = 12 * 60 * 1000L
+    private val openMeteoCacheTtlMillis = 12 * 60 * 1000L
+    // MET Norway advises waiting at least half the model update interval:
+    // 30 minutes in the Nordic area, 3 hours elsewhere.
+    private val metNordicCacheTtlMillis = 30 * 60 * 1000L
+    private val metGlobalCacheTtlMillis = 3 * 60 * 60 * 1000L
+    private val metNordicCityNames = setOf(
+        "Хельсинки", "Стокгольм", "Осло", "Копенгаген", "Рейкьявик",
+        "Таллин", "Рига", "Вильнюс", "Санкт-Петербург", "Мурманск"
+    )
+    private fun cacheTtlFor(city: City): Long = when {
+        city.name !in metNorwayCityNames -> openMeteoCacheTtlMillis
+        city.name in metNordicCityNames -> metNordicCacheTtlMillis
+        else -> metGlobalCacheTtlMillis
+    }
     private val max429Retries = 5
 
     private data class CachedWeather(val weather: CityWeather, val savedAt: Long)
@@ -725,11 +738,20 @@ class MainActivity : Activity() {
         }
     }
 
-    // MET Norway serves one coordinate per request, so only a small Nordic/Baltic group
-    // uses it; all other cities use Open-Meteo's multi-coordinate endpoint.
+    // MET Norway serves one coordinate per request. These 100 cities use it;
+    // all remaining cities use Open-Meteo's multi-coordinate endpoint.
     private val metNorwayCityNames = setOf(
         "Хельсинки", "Стокгольм", "Осло", "Копенгаген", "Рейкьявик",
-        "Таллин", "Рига", "Вильнюс", "Санкт-Петербург", "Мурманск"
+        "Таллин", "Рига", "Вильнюс", "Санкт-Петербург", "Мурманск",
+        "Лондон", "Париж", "Берлин", "Рим", "Мадрид", "Стамбул", "Киев", "Минск", "Варшава", "Афины",
+        "Тбилиси", "Баку", "Лиссабон", "Амстердам", "Вена", "Прага", "Будапешт", "Бухарест", "София", "Белград",
+        "Загреб", "Дублин", "Милан", "Барселона", "Мюнхен", "Одесса", "Кишинёв", "Ереван", "Калининград", "Архангельск",
+        "Новосибирск", "Екатеринбург", "Владивосток", "Якутск", "Казань", "Нижний Новгород", "Самара", "Краснодар", "Уфа", "Красноярск",
+        "Омск", "Челябинск", "Волгоград", "Пермь", "Воронеж", "Хабаровск", "Иркутск", "Сочи", "Тюмень", "Саратов",
+        "Токио", "Пекин", "Дели", "Сеул", "Шанхай", "Мумбаи", "Мехико", "Дубай", "Тегеран", "Ташкент",
+        "Алматы", "Бишкек", "Душанбе", "Улан-Батор", "Гонконг", "Бангкок", "Сингапур", "Карачи", "Эр-Рияд", "Багдад",
+        "Нью-Йорк", "Лос-Анджелес", "Чикаго", "Торонто", "Ванкувер", "Калгари", "Монреаль", "Оттава", "Сиэтл", "Сан-Франциско",
+        "Сан-Паулу", "Буэнос-Айрес", "Лагос", "Найроби", "Йоханнесбург", "Кейптаун", "Сидней", "Каир", "Даллас", "Филадельфия"
     )
 
     private fun fetchWeatherForCities(cities: List<City>): List<CityWeather> {
@@ -908,7 +930,7 @@ class MainActivity : Activity() {
         val now = System.currentTimeMillis()
         val cached = synchronized(weatherCache) {
             requestedCities.mapNotNull { city ->
-                weatherCache[city.name]?.takeIf { now - it.savedAt < cacheTtlMillis }?.weather
+                weatherCache[city.name]?.takeIf { now - it.savedAt < cacheTtlFor(city) }?.weather
             }
         }
         val cachedNames = cached.mapTo(HashSet()) { it.city.name }
@@ -924,7 +946,7 @@ class MainActivity : Activity() {
         }
 
         if (missing.isEmpty()) {
-            status.text = "Кэш погоды актуален · городов в области: ${cached.size} · обновление через 12 минут"
+            status.text = "Кэш погоды актуален · городов в области: ${cached.size} · Open-Meteo: 12 мин, MET Norway: 30 мин–3 ч"
             return
         }
         if (!loading.compareAndSet(false, true)) {
@@ -946,7 +968,7 @@ class MainActivity : Activity() {
                     overlay.items = merged.values.toList()
                     overlay.selected = overlay.selected?.let { merged[it.city.name] }
                     map.invalidate()
-                    status.text = "MET Norway + Open-Meteo · загружено: ${result.size} · кэш 12 мин · видимых городов: ${requestedCities.size}"
+                    status.text = "MET Norway (100 городов) + Open-Meteo · загружено: ${result.size} · кэш по правилам источников · видимых городов: ${requestedCities.size}"
                     loading.set(false)
                     if (viewportReloadPending) {
                         viewportReloadPending = false
