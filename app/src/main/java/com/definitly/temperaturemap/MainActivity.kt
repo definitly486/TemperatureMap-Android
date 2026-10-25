@@ -9,6 +9,10 @@ import android.graphics.RectF
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import org.osmdroid.events.MapEvent
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
 import android.view.Gravity
 import android.view.MotionEvent
 import android.widget.Button
@@ -20,8 +24,13 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Overlay
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
@@ -302,6 +311,15 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private val executor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
+    private val loading = AtomicBoolean(false)
+    private var viewportReloadPending = false
+    private var viewportLoadRunnable: Runnable? = null
+    private val weatherCache = LinkedHashMap<String, CachedWeather>()
+    private val cacheTtlMillis = 12 * 60 * 1000L
+    private val max429Retries = 5
+
+    private data class CachedWeather(val weather: CityWeather, val savedAt: Long)
+    private class RateLimitException(val retryAfterMillis: Long, message: String) : IOException(message)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -395,6 +413,17 @@ class MainActivity : Activity() {
         }
         root.addView(status)
         setContentView(root)
+        map.addMapListener(object : MapListener {
+            override fun onScroll(event: ScrollEvent?): Boolean {
+                scheduleViewportLoad()
+                return true
+            }
+
+            override fun onZoom(event: ZoomEvent?): Boolean {
+                scheduleViewportLoad()
+                return true
+            }
+        })
         loadTemperatures()
     }
 
@@ -415,6 +444,10 @@ class MainActivity : Activity() {
             val code = connection.responseCode
             if (code != 200) {
                 val err = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                if (code == 429) {
+                    val retryAfter = parseRetryAfterMillis(connection.getHeaderField("Retry-After"))
+                    throw RateLimitException(retryAfter, "HTTP 429 ${err.orEmpty().take(120)}")
+                }
                 throw RuntimeException("HTTP $code ${err.orEmpty().take(120)}")
             }
             val body = connection.inputStream.bufferedReader().use { it.readText() }
@@ -439,22 +472,129 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun parseRetryAfterMillis(value: String?): Long {
+        if (value.isNullOrBlank()) return 0L
+        value.trim().toLongOrNull()?.let { return (it * 1000L).coerceAtLeast(0L) }
+        return try {
+            val format = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US)
+            ((format.parse(value.trim())?.time ?: 0L) - System.currentTimeMillis()).coerceAtLeast(0L)
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun fetchChunkWithRetry(chunk: List<City>): List<CityWeather> {
+        var retry = 0
+        var backoffMillis = 1_000L
+        while (true) {
+            try {
+                return fetchChunk(chunk)
+            } catch (e: RateLimitException) {
+                if (retry >= max429Retries) throw e
+                val delay = if (e.retryAfterMillis > 0L) e.retryAfterMillis else backoffMillis
+                android.util.Log.w("TemperatureMap", "HTTP 429; повтор через ${delay} мс (попытка ${retry + 1}/$max429Retries)")
+                Thread.sleep(delay.coerceAtMost(120_000L))
+                retry++
+                backoffMillis = (backoffMillis * 2).coerceAtMost(60_000L)
+            }
+        }
+    }
+
+    private fun scheduleViewportLoad() {
+        viewportLoadRunnable?.let(handler::removeCallbacks)
+        val task = Runnable { loadTemperatures() }
+        viewportLoadRunnable = task
+        handler.postDelayed(task, 450L)
+    }
+
+    /** Выбирает города текущего окна карты с учётом уровня приближения. */
+    private fun visibleCities(): List<City> {
+        if (!::map.isInitialized || map.width <= 0 || map.height <= 0) return CITIES.filter { it.tier == 1 }
+        val bounds = map.boundingBox
+        val zoom = map.zoomLevelDouble
+        fun minZoom(tier: Int) = when (tier) {
+            1 -> 3.0
+            2 -> 4.5
+            3 -> 5.5
+            4 -> 6.5
+            else -> 7.5
+        }
+        return CITIES.filter { city ->
+            val inLongitude = if (bounds.lonWest <= bounds.lonEast) {
+                city.lon >= bounds.lonWest && city.lon <= bounds.lonEast
+            } else {
+                city.lon >= bounds.lonWest || city.lon <= bounds.lonEast
+            }
+            zoom >= minZoom(city.tier) &&
+                city.lat <= bounds.latNorth && city.lat >= bounds.latSouth && inLongitude
+        }
+    }
+
     private fun loadTemperatures() {
-        status.text = "Загружаем данные Open-Meteo…"
+        val requestedCities = visibleCities()
+        if (requestedCities.isEmpty()) {
+            status.text = "Переместите карту к интересующему региону."
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val cached = synchronized(weatherCache) {
+            requestedCities.mapNotNull { city ->
+                weatherCache[city.name]?.takeIf { now - it.savedAt < cacheTtlMillis }?.weather
+            }
+        }
+        val cachedNames = cached.mapTo(HashSet()) { it.city.name }
+        val missing = requestedCities.filter { it.name !in cachedNames }
+
+        // Сразу показываем свежие кэшированные данные, даже если часть городов ещё загружается.
+        handler.post {
+            val merged = synchronized(weatherCache) { weatherCache.values.map { it.weather } }
+                .associateBy { it.city.name }.toMutableMap()
+            cached.forEach { merged[it.city.name] = it }
+            overlay.items = merged.values.toList()
+            map.invalidate()
+        }
+
+        if (missing.isEmpty()) {
+            status.text = "Кэш погоды актуален · городов в области: ${cached.size} · обновление через 12 минут"
+            return
+        }
+        if (!loading.compareAndSet(false, true)) {
+            viewportReloadPending = true
+            return
+        }
+
+        status.text = "Загружаем погоду для ${missing.size} видимых городов…"
         executor.execute {
             try {
-                // порциями по 100 городов, чтобы не упереться в лимит длины URL
-                val result = CITIES.chunked(100).flatMap { chunk -> fetchChunk(chunk) }
+                val result = missing.chunked(100).flatMap { chunk -> fetchChunkWithRetry(chunk) }
+                val savedAt = System.currentTimeMillis()
+                synchronized(weatherCache) {
+                    result.forEach { weatherCache[it.city.name] = CachedWeather(it, savedAt) }
+                }
                 handler.post {
-                    overlay.items = result
-                    overlay.selected = null
+                    val merged = synchronized(weatherCache) { weatherCache.values.map { it.weather } }
+                        .associateBy { it.city.name }
+                    overlay.items = merged.values.toList()
+                    overlay.selected = overlay.selected?.let { merged[it.city.name] }
                     map.invalidate()
-                    status.text = "Open-Meteo · городов: ${result.size} · нажмите на город, чтобы увидеть подробности. " +
-                        "Приблизьте карту — появятся новые города."
+                    status.text = "Open-Meteo · загружено: ${result.size} · кэш 12 мин · видимых городов: ${requestedCities.size}"
+                    loading.set(false)
+                    if (viewportReloadPending) {
+                        viewportReloadPending = false
+                        scheduleViewportLoad()
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("TemperatureMap", "load failed", e)
-                handler.post { status.text = "Ошибка: ${e.javaClass.simpleName}: ${e.localizedMessage}" }
+                handler.post {
+                    status.text = "Ошибка: ${e.javaClass.simpleName}: ${e.localizedMessage}"
+                    loading.set(false)
+                    if (viewportReloadPending) {
+                        viewportReloadPending = false
+                        scheduleViewportLoad()
+                    }
+                }
             }
         }
     }
