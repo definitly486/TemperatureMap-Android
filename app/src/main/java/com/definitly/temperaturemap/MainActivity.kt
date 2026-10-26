@@ -987,7 +987,7 @@ class MainActivity : Activity() {
         "Charleston SC",
         "Columbia SC",
         "Greenville SC",
-        "Myrtle Beach",,
+        "Myrtle Beach",
         "Cheyenne",
         "Bismarck",
         "Billings",
