@@ -1088,7 +1088,9 @@ class MainActivity : Activity() {
         "Grand Junction",
         "Durango",
         "Farmington",
-        "Fargo"
+        "Fargo",
+        "Key West"
+    )
     private val nwsGridUrls = HashMap<String, String>()
     private val metNordicCityNames = setOf(
         "Хельсинки", "Стокгольм", "Осло", "Копенгаген", "Рейкьявик",
