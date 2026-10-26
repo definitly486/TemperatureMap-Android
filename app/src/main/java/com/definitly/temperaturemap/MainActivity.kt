@@ -185,7 +185,6 @@ private val CITIES = listOf(
     c("Тихуана", 32.5149, -117.0382, 3), c("Пуэбла", 19.0414, -98.2063, 3),
     c("Мерида", 20.9674, -89.5926, 3), c("Сан-Хосе", 9.9281, -84.0907, 3),
     // 200 additional US cities — forecast data from the National Weather Service (api.weather.gov)
-    c("Philadelphia", 39.9526, -75.1652, 3),
     c("San Antonio", 29.4241, -98.4936, 3),
     c("San Jose", 37.3382, -121.8863, 3),
     c("Austin", 30.2672, -97.7431, 3),
@@ -198,7 +197,6 @@ private val CITIES = listOf(
     c("Nashville", 36.1627, -86.7816, 3),
     c("Oklahoma City", 35.4676, -97.5164, 3),
     c("El Paso", 31.7619, -106.4850, 3),
-    c("Washington", 38.9072, -77.0369, 3),
     c("Las Cruces", 32.3199, -106.7637, 3),
     c("Albuquerque", 35.0844, -106.6504, 3),
     c("Tucson", 32.2226, -110.9747, 3),
@@ -212,7 +210,6 @@ private val CITIES = listOf(
     c("Miami", 25.7617, -80.1918, 3),
     c("Virginia Beach", 36.8529, -75.9780, 3),
     c("Oakland", 37.8044, -122.2712, 3),
-    c("Minneapolis", 44.9778, -93.2650, 3),
     c("Tulsa", 36.1540, -95.9928, 3),
     c("Arlington", 32.7357, -97.1081, 3),
     c("Tampa", 27.9506, -82.4572, 3),
@@ -384,7 +381,6 @@ private val CITIES = listOf(
     c("Columbia SC", 34.0007, -81.0348, 5),
     c("Greenville SC", 34.8526, -82.3940, 5),
     c("Myrtle Beach", 33.6891, -78.8867, 5),
-    c("Savannah GA", 32.0809, -81.0912, 5),
     // Russia — ещё 200 городов
     c("Балашиха", 55.7963, 37.9382, 4), c("Мытищи", 55.9105, 37.7364, 4),
     c("Королёв", 55.9142, 37.8545, 4), c("Люберцы", 55.6772, 37.8932, 4),
@@ -792,7 +788,6 @@ class MainActivity : Activity() {
         "Лас-Вегас",
         "Финикс",
         "Денвер",
-        "Philadelphia",
         "San Antonio",
         "San Jose",
         "Austin",
@@ -805,7 +800,6 @@ class MainActivity : Activity() {
         "Nashville",
         "Oklahoma City",
         "El Paso",
-        "Washington",
         "Las Cruces",
         "Albuquerque",
         "Tucson",
@@ -819,7 +813,6 @@ class MainActivity : Activity() {
         "Miami",
         "Virginia Beach",
         "Oakland",
-        "Minneapolis",
         "Tulsa",
         "Arlington",
         "Tampa",
@@ -990,8 +983,11 @@ class MainActivity : Activity() {
         "Charleston SC",
         "Columbia SC",
         "Greenville SC",
-        "Myrtle Beach",
-        "Savannah GA"
+        "Myrtle Beach",,
+        "Cheyenne",
+        "Bismarck",
+        "Billings",
+        "Rapid City"
     )
     private val nwsGridUrls = HashMap<String, String>()
     private val metNordicCityNames = setOf(
