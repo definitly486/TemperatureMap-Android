@@ -1223,11 +1223,13 @@ class MainActivity : Activity() {
         setContentView(root)
         map.addMapListener(object : MapListener {
             override fun onScroll(event: ScrollEvent?): Boolean {
+                updateViewportStatus()
                 scheduleViewportLoad()
                 return true
             }
 
             override fun onZoom(event: ZoomEvent?): Boolean {
+                updateViewportStatus()
                 scheduleViewportLoad()
                 return true
             }
@@ -1527,7 +1529,26 @@ class MainActivity : Activity() {
         viewportLoadRunnable?.let(handler::removeCallbacks)
         val task = Runnable { loadTemperatures() }
         viewportLoadRunnable = task
-        handler.postDelayed(task, 450L)
+        handler.postDelayed(task, 250L)
+    }
+
+    /**
+     * Пересчитывает число городов сразу, не ожидая завершения сетевых запросов.
+     */
+    private fun updateViewportStatus() {
+        if (!::map.isInitialized || !::status.isInitialized || map.width <= 0 || map.height <= 0) return
+        val count = visibleCities().size
+        status.text = if (count == 0) {
+            "В этой области нет городов · переместите карту или приблизьте её"
+        } else {
+            "Городов в текущей области: $count · обновление погоды…"
+        }
+    }
+
+    private fun isCurrentViewport(requestedCities: List<City>): Boolean {
+        if (!::map.isInitialized || map.width <= 0 || map.height <= 0) return false
+        val currentNames = visibleCities().mapTo(HashSet()) { it.name }
+        return currentNames == requestedCities.mapTo(HashSet()) { it.name }
     }
 
     /** Выбирает города текущего окна карты с учётом уровня приближения. */
@@ -1579,7 +1600,9 @@ class MainActivity : Activity() {
         }
 
         if (missing.isEmpty()) {
-            status.text = "Кэш погоды актуален · городов в области: ${cached.size} · Open-Meteo: 12 мин, MET Norway: 30 мин–3 ч"
+            if (isCurrentViewport(requestedCities)) {
+                status.text = "Кэш актуален · городов в текущей области: ${requestedCities.size}"
+            }
             return
         }
         if (!loading.compareAndSet(false, true)) {
@@ -1601,7 +1624,9 @@ class MainActivity : Activity() {
                     overlay.items = merged.values.toList()
                     overlay.selected = overlay.selected?.let { merged[it.city.name] }
                     map.invalidate()
-                    status.text = "NWS (США) + MET Norway (100 городов) + Open-Meteo · загружено: ${result.size} · видимых городов: ${requestedCities.size}"
+                    if (isCurrentViewport(requestedCities)) {
+                        status.text = "NWS + MET Norway + Open-Meteo · загружено: ${result.size} · городов в текущей области: ${requestedCities.size}"
+                    }
                     loading.set(false)
                     if (viewportReloadPending) {
                         viewportReloadPending = false
@@ -1611,7 +1636,9 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 android.util.Log.e("TemperatureMap", "load failed", e)
                 handler.post {
-                    status.text = "Ошибка: ${e.javaClass.simpleName}: ${e.localizedMessage}"
+                    if (isCurrentViewport(requestedCities)) {
+                        status.text = "Ошибка загрузки: ${e.javaClass.simpleName}: ${e.localizedMessage}"
+                    }
                     loading.set(false)
                     if (viewportReloadPending) {
                         viewportReloadPending = false
