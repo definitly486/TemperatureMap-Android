@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- osmdroid подгружает свои картинки (маркеры, значки) по имени ресурса,
+     поэтому ресурсы-картинки библиотеки оставляем при сжатии ресурсов. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/*" />
