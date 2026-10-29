@@ -21,6 +21,47 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+        // Убираем runtime-проверки параметров Kotlin: меньше байткода, поведение не меняется.
+        freeCompilerArgs += listOf(
+            "-Xno-param-assertions",
+            "-Xno-call-assertions",
+            "-Xno-receiver-assertions"
+        )
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true      // R8: удаление неиспользуемого кода (в osmdroid его много)
+            isShrinkResources = true    // удаление неиспользуемых ресурсов
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+
+    // Служебные файлы библиотек, не нужные в рантайме.
+    packaging {
+        resources {
+            excludes += setOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                "/META-INF/LICENSE*",
+                "/META-INF/NOTICE*",
+                "/META-INF/DEPENDENCIES",
+                "/META-INF/*.version",
+                "/META-INF/com/android/build/gradle/app-metadata.properties",
+                "DebugProbesKt.bin",
+                "kotlin-tooling-metadata.json",
+                "/kotlin/**",
+                "/META-INF/*.kotlin_module"
+            )
+        }
+    }
+
+    // Блоб с метаданными зависимостей (нужен только для Google Play).
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 }
 
